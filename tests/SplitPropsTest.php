@@ -212,13 +212,87 @@ class SplitPropsTest extends TestCase
                 'Comment-like text (no special handling, splits on comma)',
             ],
 
-            // Mixed quote types - Heuristic pushes ALL quotes to stack
-            // so single quote inside double quote breaks matching
-            'mixed quote types DIFFERS' => [
+            // =====================================================================
+            // MIXED QUOTE TYPES - Heuristic pushes ALL quotes to stack
+            // so different quote type inside breaks matching
+            // =====================================================================
+
+            'double containing single' => [
                 'a,"b\'c",d',
-                ['a', '"b\'c"', 'd'],           // Lexer: correctly handles nested quotes
-                ['a', '"b\'c",d'],              // Heuristic: single quote breaks quote matching
-                'Single quotes inside double quotes - heuristic fails',
+                ['a', '"b\'c"', 'd'],           // Lexer: correctly handles
+                ['a', '"b\'c",d'],              // Heuristic: fails
+                'Single quote inside double quotes',
+            ],
+
+            'single containing double' => [
+                'a,\'b"c\',d',
+                ['a', '\'b"c\'', 'd'],          // Lexer: correctly handles
+                ['a', '\'b"c\',d'],             // Heuristic: fails
+                'Double quote inside single quotes',
+            ],
+
+            'backtick containing double' => [
+                'a,`b"c`,d',
+                ['a', '`b"c`', 'd'],            // Lexer: correctly handles
+                ['a', '`b"c`,d'],               // Heuristic: fails
+                'Double quote inside backticks',
+            ],
+
+            'backtick containing single' => [
+                'a,`b\'c`,d',
+                ['a', '`b\'c`', 'd'],           // Lexer: correctly handles
+                ['a', '`b\'c`,d'],              // Heuristic: fails
+                'Single quote inside backticks',
+            ],
+
+            'double containing backtick' => [
+                'a,"b`c",d',
+                ['a', '"b`c"', 'd'],            // Lexer: correctly handles
+                ['a', '"b`c",d'],               // Heuristic: fails
+                'Backtick inside double quotes',
+            ],
+
+            'single containing backtick' => [
+                'a,\'b`c\',d',
+                ['a', '\'b`c\'', 'd'],          // Lexer: correctly handles
+                ['a', '\'b`c\',d'],             // Heuristic: fails
+                'Backtick inside single quotes',
+            ],
+
+            // =====================================================================
+            // MIXED QUOTES INSIDE BRACKETS - bracket matching breaks due to quotes
+            // =====================================================================
+
+            'mixed quotes in braces' => [
+                'a,{x:"y\'z"},b',
+                ['a', '{x:"y\'z"}', 'b'],       // Lexer: correctly handles
+                ['a', '{x:"y\'z"},b'],          // Heuristic: fails
+                'Mixed quotes inside braces break bracket matching',
+            ],
+
+            'mixed quotes in brackets' => [
+                'a,["x\'y"],b',
+                ['a', '["x\'y"]', 'b'],         // Lexer: correctly handles
+                ['a', '["x\'y"],b'],            // Heuristic: fails
+                'Mixed quotes inside square brackets break bracket matching',
+            ],
+
+            // =====================================================================
+            // ESCAPE EDGE CASES
+            // =====================================================================
+
+            'escaped quote at start' => [
+                '\\"a,b',
+                ['\\"a,b'],                     // Lexer: treats as single token
+                ['\\"a', 'b'],                  // Heuristic: splits (position check fails at 0)
+                'Escaped quote at position 0 - heuristic checks position-1 which is invalid',
+            ],
+
+            'string ending with backslash' => [
+                'a,"b\\\\",c',
+                ['a', '"b\\\\"', 'c'],          // Lexer: handles trailing backslash
+                ['a', '"b\\\\",c'],             // Heuristic: fails
+                'Quoted string ending with escaped backslash',
             ],
         ];
     }

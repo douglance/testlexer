@@ -2,16 +2,15 @@
 
 ## Summary
 
-**Surprising finding:** The heuristic implementation handles most cases correctly - contrary to the initial ChatGPT analysis. Both implementations produce identical output for 21 out of 22 test cases.
-
 | Result | Count |
 |--------|-------|
 | Both match | 21 |
-| Differ | 1 |
+| Heuristic fails | **10** |
+| **Total tests** | **42** |
 
 ---
 
-## Cases Where Both Match ✅
+## Cases Where Both Match ✅ (21 cases)
 
 | # | Input | Output |
 |---|-------|--------|
@@ -39,52 +38,83 @@
 
 ---
 
-## Cases Where They Differ ❌
+## Cases Where Heuristic Fails ❌ (10 cases)
+
+### Mixed Quote Types (6 cases)
+
+The heuristic pushes ALL quote types to the stack. When a different quote type appears inside, it gets pushed too, breaking the matching logic.
+
+| # | Input | Lexer ✅ | Heuristic ❌ |
+|---|-------|----------|--------------|
+| 1 | `a,"b'c",d` | `["a", "\"b'c\"", "d"]` | `["a", "\"b'c\",d"]` |
+| 2 | `a,'b"c',d` | `["a", "'b\"c'", "d"]` | `["a", "'b\"c',d"]` |
+| 3 | `a,\`b"c\`,d` | `["a", "\`b\"c\`", "d"]` | `["a", "\`b\"c\`,d"]` |
+| 4 | `a,\`b'c\`,d` | `["a", "\`b'c\`", "d"]` | `["a", "\`b'c\`,d"]` |
+| 5 | `a,"b\`c",d` | `["a", "\"b\`c\"", "d"]` | `["a", "\"b\`c\",d"]` |
+| 6 | `a,'b\`c',d` | `["a", "'b\`c'", "d"]` | `["a", "'b\`c',d"]` |
+
+### Mixed Quotes Inside Brackets (2 cases)
+
+When mixed quotes appear inside brackets, the bracket matching also breaks because the quote stack interferes.
+
+| # | Input | Lexer ✅ | Heuristic ❌ |
+|---|-------|----------|--------------|
+| 7 | `a,{x:"y'z"},b` | `["a", "{x:\"y'z\"}", "b"]` | `["a", "{x:\"y'z\"},b"]` |
+| 8 | `a,["x'y"],b` | `["a", "[\"x'y\"]", "b"]` | `["a", "[\"x'y\"],b"]` |
+
+### Escape Edge Cases (2 cases)
 
 | # | Input | Lexer ✅ | Heuristic ❌ | Reason |
 |---|-------|----------|--------------|--------|
-| 1 | `a,"b'c",d` | `["a", "\"b'c\"", "d"]` | `["a", "\"b'c\",d"]` | Heuristic pushes ALL quote types to stack. Single quote inside double quote breaks matching. |
+| 9 | `\"a,b` | `["\\\"a,b"]` | `["\\\"a", "b"]` | Heuristic checks `position-1` which is invalid at position 0 |
+| 10 | `a,"b\\\\",c` | `["a", "\"b\\\\\"", "c"]` | `["a", "\"b\\\\\",c"]` | String ending with escaped backslash confuses heuristic |
 
 ---
 
-## Why The Heuristic Works Better Than Expected
+## Root Cause Analysis
 
-The ChatGPT analysis predicted many failures that didn't occur. Here's why:
+### Why Mixed Quotes Fail
 
-### Quote Handling
-The heuristic uses a **toggle mechanism** with the stack:
 ```php
-$char === self::last($stack)
-    ? array_pop($stack)   // Same quote = close
-    : array_push($stack, $char);  // Different = open new
+// Heuristic quote handling:
+if (in_array($char, $quotes)) {
+    $char === self::last($stack)
+        ? array_pop($stack)      // Same quote type = close
+        : array_push($stack, $char);  // Different = push NEW quote
+}
 ```
 
-This correctly handles:
-- `"b,c"` → pushes `"`, protects comma, pops `"`
-- `'b;c'` → pushes `'`, protects semicolon, pops `'`
+For input `"b'c"`:
+1. `"` → stack: `["]`
+2. `'` → stack top is `"`, not `'` → push → stack: `["`, `']`
+3. `"` → stack top is `'`, not `"` → push → stack: `["`, `'`, `"]`
+4. Never closes properly → consumes rest of input
 
-### Escape Handling
-The heuristic checks `$input[$position - 1] !== '\\'` before toggling quotes. This prevents escaped quotes from closing strings:
-- `"b\"c,d"` → `\"` doesn't toggle because prev char is `\`
+### Why Lexer Works
 
-### Where It Fails
-Mixed quote types like `"b'c"`:
-1. Sees `"` → pushes `"`
-2. Sees `'` → stack top is `"`, not `'`, so pushes `'`
-3. Sees `"` → stack top is `'`, not `"`, so pushes another `"`
-4. Never properly closes, consumes rest of input
+```php
+// Lexer uses dedicated string-parsing mode:
+if ($char === '"' || $char === "'" || $char === '`') {
+    $quote = $char;  // Remember which quote opened
+    while ($i < $length) {
+        if ($char === $quote) break;  // Only SAME quote closes
+        // Other quote types are just characters
+    }
+}
+```
 
 ---
 
-## Key Differences Between Implementations
+## Summary
 
-| Feature | Heuristic | Lexer |
-|---------|-----------|-------|
-| Quote state | Stack toggle | Dedicated string-parsing loop |
-| Escape handling | Check previous char | Consume backslash + next char |
-| Mixed quotes | ❌ Breaks | ✅ Works |
-| Bracket matching | Index-based parallel arrays | Explicit open→close map |
-| CRLF | `\r` as separator | Explicit `\r\n` handling |
+| Failure Category | Count | Root Cause |
+|------------------|-------|------------|
+| Mixed quote types | 6 | Stack toggle pushes all quotes |
+| Mixed quotes in brackets | 2 | Quote stack breaks bracket matching |
+| Escape edge cases | 2 | Position-1 check + trailing backslash |
+| **Total failures** | **10** | |
+
+The lexer's ~80 extra lines exist specifically to handle these 10 edge cases correctly.
 
 ---
 
@@ -92,10 +122,8 @@ Mixed quote types like `"b'c"`:
 
 ```bash
 # With Docker
-docker run --rm -v "$(pwd):/app" -w /app composer:latest install
 docker run --rm -v "$(pwd):/app" -w /app php:8.3-cli vendor/bin/phpunit --testdox
 
 # With local PHP
-composer install
 composer test
 ```
