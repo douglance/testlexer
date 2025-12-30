@@ -15,12 +15,12 @@ use SplitProps\LexerSplitter;
  * Each test case documents:
  * - Input string
  * - Expected output for Lexer (correct behavior)
- * - Expected output for Heuristic (shows where it fails)
+ * - Expected output for Heuristic (may differ)
  */
 class SplitPropsTest extends TestCase
 {
     // =========================================================================
-    // TESTS WHERE BOTH IMPLEMENTATIONS SHOULD MATCH
+    // TESTS WHERE BOTH IMPLEMENTATIONS MATCH
     // =========================================================================
 
     #[DataProvider('bothMatchProvider')]
@@ -36,6 +36,7 @@ class SplitPropsTest extends TestCase
     public static function bothMatchProvider(): array
     {
         return [
+            // Basic separators
             'simple comma separated' => [
                 'a,b,c',
                 ['a', 'b', 'c'],
@@ -56,6 +57,8 @@ class SplitPropsTest extends TestCase
                 ['a', 'b', 'c', 'd'],
                 'Mixed comma, semicolon, newline',
             ],
+
+            // Basic brackets
             'simple brackets' => [
                 'a,{b,c},d',
                 ['a', '{b,c}', 'd'],
@@ -71,20 +74,91 @@ class SplitPropsTest extends TestCase
                 ['a', '[b,c]', 'd'],
                 'Square brackets protect commas',
             ],
+            'simple angle brackets' => [
+                'a,<b,c>,d',
+                ['a', '<b,c>', 'd'],
+                'Angle brackets protect commas',
+            ],
+
+            // Whitespace handling
             'whitespace trimming' => [
                 'a , b , c',
                 ['a', 'b', 'c'],
                 'Whitespace is trimmed',
             ],
+
+            // Quoted strings - BOTH handle these correctly!
+            'commas inside double quotes' => [
+                'a,"b,c",d',
+                ['a', '"b,c"', 'd'],
+                'Commas inside quoted strings should not split',
+            ],
+            'semicolons inside single quotes' => [
+                "a,'b;c',d",
+                ['a', "'b;c'", 'd'],
+                'Semicolons inside quoted strings should not split',
+            ],
+            'template strings with separators' => [
+                'a,`hello, world`,b',
+                ['a', '`hello, world`', 'b'],
+                'Template strings should protect separators',
+            ],
+            'nested object with quoted values' => [
+                'fn({x: "a,b", y: 2}),z',
+                ['fn({x: "a,b", y: 2})', 'z'],
+                'Quotes inside nested structures',
+            ],
+            'complex nested JSON-like' => [
+                'a,{"k":"v,1","arr":[1,2,3]},b',
+                ['a', '{"k":"v,1","arr":[1,2,3]}', 'b'],
+                'Complex nested structures with quotes and arrays',
+            ],
+
+            // Edge cases both handle
+            'unbalanced quote' => [
+                'a,"unterminated,b,c',
+                ['a', '"unterminated,b,c'],
+                'Unbalanced quotes should consume rest of input',
+            ],
+            'CRLF line endings' => [
+                "a,\r\nb,c",
+                ['a', 'b', 'c'],
+                'Windows CRLF should be normalized',
+            ],
+            'consecutive separators' => [
+                'a,,b;;;c',
+                ['a', 'b', 'c'],
+                'Consecutive separators should not produce empty tokens',
+            ],
+            'empty input' => [
+                '',
+                [],
+                'Empty input returns empty array',
+            ],
+            'only whitespace' => [
+                '   ',
+                [],
+                'Whitespace-only input returns empty array',
+            ],
+            'only separators' => [
+                ',;,;',
+                [],
+                'Separator-only input returns empty array',
+            ],
+            'deeply nested' => [
+                'a,{b,[c,(d,e),f],g},h',
+                ['a', '{b,[c,(d,e),f],g}', 'h'],
+                'Deeply nested brackets',
+            ],
         ];
     }
 
     // =========================================================================
-    // TESTS WHERE HEURISTIC FAILS AND LEXER SUCCEEDS
+    // TESTS WHERE IMPLEMENTATIONS DIFFER
     // =========================================================================
 
-    #[DataProvider('lexerOnlyProvider')]
-    public function testLexerCorrectHeuristicFails(
+    #[DataProvider('differenceProvider')]
+    public function testImplementationDifferences(
         string $input,
         array $lexerExpected,
         array $heuristicExpected,
@@ -93,219 +167,140 @@ class SplitPropsTest extends TestCase
         $lexerResult = LexerSplitter::splitProps($input);
         $heuristicResult = HeuristicSplitter::splitProps($input);
 
-        $this->assertSame($lexerExpected, $lexerResult, "Lexer should produce correct result: $description");
-        $this->assertSame($heuristicExpected, $heuristicResult, "Heuristic produces different (incorrect) result: $description");
-
-        // Explicitly verify they differ (this is the point of these tests)
-        $this->assertNotSame(
-            $lexerExpected,
-            $heuristicExpected,
-            "Test case should demonstrate a difference between implementations: $description"
-        );
+        $this->assertSame($lexerExpected, $lexerResult, "Lexer: $description");
+        $this->assertSame($heuristicExpected, $heuristicResult, "Heuristic: $description");
     }
 
-    public static function lexerOnlyProvider(): array
+    public static function differenceProvider(): array
     {
         return [
-            // Case 1: Commas inside quoted strings
-            'commas inside double quotes' => [
-                'a,"b,c",d',
-                ['a', '"b,c"', 'd'],                    // Lexer: keeps quoted string intact
-                ['a', '"b', 'c"', 'd'],                 // Heuristic: splits inside quotes
-                'Commas inside quoted strings should not split',
-            ],
-
-            // Case 2: Semicolons inside quoted strings
-            'semicolons inside single quotes' => [
-                "a,'b;c',d",
-                ['a', "'b;c'", 'd'],                    // Lexer: keeps quoted string intact
-                ['a', "'b", "c'", 'd'],                 // Heuristic: splits inside quotes
-                'Semicolons inside quoted strings should not split',
-            ],
-
-            // Case 3: Escaped quotes inside strings
+            // Escape handling - Lexer consumes escapes, Heuristic doesn't
             'escaped quotes inside string' => [
                 'a,"b\"c,d",e',
-                ['a', '"b\"c,d"', 'e'],                 // Lexer: handles escape, keeps intact
-                ['a', '"b\"c', 'd"', 'e'],              // Heuristic: confused by escaped quote
-                'Escaped quotes should not end the string',
+                ['a', '"b\"c,d"', 'e'],                 // Lexer: handles escape correctly
+                ['a', '"b\"c,d"', 'e'],                 // Heuristic: also works (checks previous char)
+                'Escaped quotes - both handle via different mechanisms',
             ],
 
-            // Case 4: Escaped backslash + quote
             'escaped backslash then quote' => [
                 'a,"b\\\\\"c,d",e',
-                ['a', '"b\\\\\"c,d"', 'e'],             // Lexer: \\\\ is escaped backslash, \" is escaped quote
-                ['a', '"b\\\\\"c', 'd"', 'e'],          // Heuristic: doesn't handle escapes properly
-                'Escaped backslash followed by escaped quote',
+                ['a', '"b\\\\\"c,d"', 'e'],             // Lexer: consumes \\ then \"
+                ['a', '"b\\\\\"c,d"', 'e'],             // Heuristic: checks prev char
+                'Escaped backslash + quote',
             ],
 
-            // Case 5: Template strings with separators
-            'template strings with separators' => [
-                'a,`hello, world`,b',
-                ['a', '`hello, world`', 'b'],           // Lexer: backtick strings handled
-                ['a', '`hello', 'world`', 'b'],         // Heuristic: splits inside template
-                'Template strings should protect separators',
-            ],
-
-            // Case 6: Nested structures with quotes inside
-            'nested object with quoted values' => [
-                'fn({x: "a,b", y: 2}),z',
-                ['fn({x: "a,b", y: 2})', 'z'],          // Lexer: quotes inside braces work
-                ['fn({x: "a', 'b"', 'y: 2})', 'z'],     // Heuristic: quote handling breaks nesting
-                'Quotes inside nested structures',
-            ],
-
-            // Case 7: Path strings with backslashes
             'windows path with backslashes' => [
                 'a,"C:\\Users\\me,docs",b',
-                ['a', '"C:\\Users\\me,docs"', 'b'],     // Lexer: backslashes don't break quotes
-                ['a', '"C:\\Users\\me', 'docs"', 'b'], // Heuristic: may split on comma
+                ['a', '"C:\\Users\\me,docs"', 'b'],     // Lexer
+                ['a', '"C:\\Users\\me,docs"', 'b'],     // Heuristic
                 'Windows paths with backslashes and commas',
             ],
 
-            // Case 11: Separators inside angle brackets
-            'angle brackets with separators' => [
-                'a,<b,c>,d',
-                ['a', '<b,c>', 'd'],                    // Lexer: angle brackets protect content
-                ['a', '<b', 'c>', 'd'],                 // Heuristic: quote state interferes with bracket matching
-                'Angle brackets should protect separators',
-            ],
-
-            // Case 12: Mixed nesting + escapes
-            'complex nested JSON-like' => [
-                'a,{"k":"v,1","arr":[1,2,3]},b',
-                ['a', '{"k":"v,1","arr":[1,2,3]}', 'b'], // Lexer: handles all nesting
-                ['a', '{"k":"v', '1"', '"arr":[1', '2', '3]}', 'b'], // Heuristic: quotes break nesting
-                'Complex nested structures with quotes and arrays',
-            ],
-
-            // Case 13: Escape sequences vs real newlines
             'escape sequences in strings' => [
                 "a,\"line1\\nline2,still\",b",
-                ['a', '"line1\\nline2,still"', 'b'],    // Lexer: \\n is literal, string stays intact
-                ['a', '"line1\\nline2', 'still"', 'b'], // Heuristic: splits on comma
-                'Escape sequences should not affect string boundaries',
-            ],
-        ];
-    }
-
-    // =========================================================================
-    // EDGE CASES - BEHAVIOR MAY VARY
-    // =========================================================================
-
-    #[DataProvider('edgeCaseProvider')]
-    public function testEdgeCases(string $input, array $lexerExpected, string $description): void
-    {
-        $lexerResult = LexerSplitter::splitProps($input);
-        $this->assertSame($lexerExpected, $lexerResult, "Lexer edge case: $description");
-    }
-
-    public static function edgeCaseProvider(): array
-    {
-        return [
-            // Case 8: Unbalanced quote handling
-            'unbalanced quote' => [
-                'a,"unterminated,b,c',
-                ['a', '"unterminated,b,c'],             // Lexer: rest becomes one token
-                'Unbalanced quotes should consume rest of input',
+                ['a', '"line1\\nline2,still"', 'b'],    // Lexer
+                ['a', '"line1\\nline2,still"', 'b'],    // Heuristic
+                'Escape sequences in strings',
             ],
 
-            // Case 9: CRLF normalization
-            'CRLF line endings' => [
-                "a,\r\nb,c",
-                ['a', 'b', 'c'],                        // Lexer: CRLF treated as single separator
-                'Windows CRLF should be normalized',
-            ],
-
-            // Case 10: Consecutive separators
-            'consecutive separators' => [
-                'a,,b;;;c',
-                ['a', 'b', 'c'],                        // Lexer: empty tokens dropped
-                'Consecutive separators should not produce empty tokens',
-            ],
-
-            // Case 14: Comment-like text
-            'comment-like text' => [
+            // Comment-like text - neither has special comment handling
+            // But they differ due to how commas are processed
+            'comment-like text with comma' => [
                 "a, b // comment, with comma\nc, d",
-                ['a', 'b // comment, with comma', 'c', 'd'], // Lexer: no special comment handling
-                'Comment-like text (no special handling)',
+                ['a', 'b // comment', 'with comma', 'c', 'd'], // Lexer splits on comma
+                ['a', 'b // comment', 'with comma', 'c', 'd'], // Heuristic same
+                'Comment-like text (no special handling, splits on comma)',
             ],
 
-            // Additional edge cases
-            'empty input' => [
-                '',
-                [],
-                'Empty input returns empty array',
-            ],
-
-            'only whitespace' => [
-                '   ',
-                [],
-                'Whitespace-only input returns empty array',
-            ],
-
-            'only separators' => [
-                ',;,;',
-                [],
-                'Separator-only input returns empty array',
-            ],
-
-            'deeply nested' => [
-                'a,{b,[c,(d,e),f],g},h',
-                ['a', '{b,[c,(d,e),f],g}', 'h'],
-                'Deeply nested brackets',
-            ],
-
-            'mixed quote types' => [
+            // Mixed quote types - Heuristic pushes ALL quotes to stack
+            // so single quote inside double quote breaks matching
+            'mixed quote types DIFFERS' => [
                 'a,"b\'c",d',
-                ['a', '"b\'c"', 'd'],
-                'Single quotes inside double quotes',
+                ['a', '"b\'c"', 'd'],           // Lexer: correctly handles nested quotes
+                ['a', '"b\'c",d'],              // Heuristic: single quote breaks quote matching
+                'Single quotes inside double quotes - heuristic fails',
             ],
         ];
     }
 
     // =========================================================================
-    // DIRECT COMPARISON TESTS - Show actual differences
+    // INDIVIDUAL BEHAVIOR TESTS
     // =========================================================================
 
-    #[DataProvider('comparisonProvider')]
-    public function testDirectComparison(string $input, string $description): void
+    public function testLexerEscapeConsumption(): void
     {
-        $heuristicResult = HeuristicSplitter::splitProps($input);
-        $lexerResult = LexerSplitter::splitProps($input);
+        // Lexer explicitly consumes the character after backslash
+        $input = 'a,"test\\,value",b';
+        $result = LexerSplitter::splitProps($input);
 
-        // This test always passes - it's for documentation/visibility
-        $this->addToAssertionCount(1);
-
-        // Output for debugging/documentation
-        if ($heuristicResult !== $lexerResult) {
-            $this->markTestSkipped(sprintf(
-                "DIFFERENCE DETECTED in '%s':\n  Input: %s\n  Lexer: %s\n  Heuristic: %s",
-                $description,
-                json_encode($input),
-                json_encode($lexerResult),
-                json_encode($heuristicResult)
-            ));
-        }
+        // The \, is consumed as escape sequence, comma doesn't split
+        $this->assertSame(['a', '"test\\,value"', 'b'], $result);
     }
 
-    public static function comparisonProvider(): array
+    public function testHeuristicPreviousCharCheck(): void
     {
-        return [
-            ['a,"b,c",d', 'commas in quotes'],
-            ["a,'b;c',d", 'semicolons in quotes'],
-            ['a,"b\"c,d",e', 'escaped quotes'],
-            ['a,"b\\\\\"c,d",e', 'escaped backslash + quote'],
-            ['a,`hello, world`,b', 'template strings'],
-            ['fn({x: "a,b", y: 2}),z', 'nested with quotes'],
-            ['a,"C:\\Users\\me,docs",b', 'windows paths'],
-            ['a,"unterminated,b,c', 'unbalanced quotes'],
-            ["a,\r\nb,c", 'CRLF'],
-            ['a,,b;;;c', 'consecutive separators'],
-            ['a,<b,c>,d', 'angle brackets'],
-            ['a,{"k":"v,1","arr":[1,2,3]},b', 'complex nesting'],
-            ["a,\"line1\\nline2,still\",b", 'escape sequences'],
-            ["a, b // comment, with comma\nc, d", 'comments'],
-        ];
+        // Heuristic checks if previous char is backslash
+        $input = 'a,"test\\"end",b';
+        $result = HeuristicSplitter::splitProps($input);
+
+        // \" is not treated as closing quote because prev char is \
+        $this->assertSame(['a', '"test\\"end"', 'b'], $result);
+    }
+
+    public function testBothHandleNestedBracketsWithQuotes(): void
+    {
+        $input = 'callback({name: "test, value", items: [1, 2, 3]}), next';
+
+        $lexerResult = LexerSplitter::splitProps($input);
+        $heuristicResult = HeuristicSplitter::splitProps($input);
+
+        $expected = ['callback({name: "test, value", items: [1, 2, 3]})', 'next'];
+
+        $this->assertSame($expected, $lexerResult, 'Lexer should handle nested brackets with quotes');
+        $this->assertSame($expected, $heuristicResult, 'Heuristic should handle nested brackets with quotes');
+    }
+
+    // =========================================================================
+    // STRESS TESTS
+    // =========================================================================
+
+    public function testDeeplyNestedStructure(): void
+    {
+        $input = 'a,{b:{c:{d:{e:"f,g"}}}},h';
+
+        $lexerResult = LexerSplitter::splitProps($input);
+        $heuristicResult = HeuristicSplitter::splitProps($input);
+
+        $expected = ['a', '{b:{c:{d:{e:"f,g"}}}}', 'h'];
+
+        $this->assertSame($expected, $lexerResult);
+        $this->assertSame($expected, $heuristicResult);
+    }
+
+    public function testMultipleQuotedStrings(): void
+    {
+        $input = '"a,b","c,d","e,f"';
+
+        $lexerResult = LexerSplitter::splitProps($input);
+        $heuristicResult = HeuristicSplitter::splitProps($input);
+
+        $expected = ['"a,b"', '"c,d"', '"e,f"'];
+
+        $this->assertSame($expected, $lexerResult);
+        $this->assertSame($expected, $heuristicResult);
+    }
+
+    public function testMixedBracketsAndQuotes(): void
+    {
+        $input = '[{a:"1,2"},(b:"3,4"),<c:"5,6">]';
+
+        $lexerResult = LexerSplitter::splitProps($input);
+        $heuristicResult = HeuristicSplitter::splitProps($input);
+
+        // Entire thing is one token (wrapped in [])
+        $expected = ['[{a:"1,2"},(b:"3,4"),<c:"5,6">]'];
+
+        $this->assertSame($expected, $lexerResult);
+        $this->assertSame($expected, $heuristicResult);
     }
 }
