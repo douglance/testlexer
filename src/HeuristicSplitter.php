@@ -25,14 +25,11 @@ class HeuristicSplitter
         while ($position < strlen($input)) {
             $char = $input[$position];
 
-            // Quote handling (heuristic)
-            if (in_array($char, $quotes, true)) {
-                if ($position === 0 || $input[$position - 1] !== '\\') {
-                    if (!empty($stack) && end($stack) === $char) {
-                        array_pop($stack);
-                    } else {
-                        $stack[] = $char;
-                    }
+            if (in_array($char, $quotes)) {
+                if ($input[$position - 1] !== '\\') {
+                    $char === self::last($stack)
+                        ? array_pop($stack)
+                        : array_push($stack, $char);
                 }
 
                 $buffer .= $char;
@@ -40,43 +37,38 @@ class HeuristicSplitter
                 continue;
             }
 
-            // Opening brackets
-            if (($index = array_search($char, $opens, true)) !== false) {
-                $stack[] = $closes[$index];
-                $buffer .= $char;
-                $position++;
-                continue;
+            if (($index = array_search($char, $opens)) !== false) {
+                array_push($stack, $closes[$index]);
             }
 
-            // Closing brackets
-            if (!empty($stack) && $char === end($stack)) {
+            if ($char === self::last($stack)) {
                 array_pop($stack);
-                $buffer .= $char;
-                $position++;
-                continue;
             }
 
-            // Separator (only if not nested)
-            if (empty($stack) && in_array($char, $separators, true)) {
-                $part = trim($buffer);
-                if ($part !== '') {
+            if (empty($stack) && in_array($char, $separators)) {
+                if ($part = trim($buffer)) {
                     $parts[] = $part;
                 }
                 $buffer = '';
-                $position++;
-                continue;
+            } else {
+                $buffer .= $char;
             }
 
-            $buffer .= $char;
             $position++;
         }
 
-        // Final token
-        $part = trim($buffer);
-        if ($part !== '') {
+        if ($part = trim($buffer)) {
             $parts[] = $part;
         }
 
         return $parts;
+    }
+
+    private static function last(array $array): mixed
+    {
+        if (empty($array)) {
+            return null;
+        }
+        return end($array);
     }
 }

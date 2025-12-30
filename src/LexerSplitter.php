@@ -17,22 +17,23 @@ class LexerSplitter
         $length = strlen($input);
         $i = 0;
 
-        // Stack for nested structures
+        // Stack to track nested structures
         $nestingStack = [];
 
-        // Opening → closing bracket map
+        // Mapping of opening to closing brackets
         $brackets = [
             '{' => '}',
             '[' => ']',
             '(' => ')',
             '<' => '>',
         ];
+
         $closingBrackets = array_flip($brackets);
 
         while ($i < $length) {
             $char = $input[$i];
 
-            // Handle string literals
+            // Handle string literals (single, double, and template)
             if ($char === '"' || $char === "'" || $char === '`') {
                 $quote = $char;
                 $current .= $char;
@@ -42,7 +43,7 @@ class LexerSplitter
                     $char = $input[$i];
                     $current .= $char;
 
-                    // Escape sequence
+                    // Handle escape sequences
                     if ($char === '\\' && $i + 1 < $length) {
                         $i++;
                         $current .= $input[$i];
@@ -62,7 +63,7 @@ class LexerSplitter
                 continue;
             }
 
-            // Opening bracket
+            // Handle opening brackets
             if (isset($brackets[$char])) {
                 $nestingStack[] = $brackets[$char];
                 $current .= $char;
@@ -70,8 +71,9 @@ class LexerSplitter
                 continue;
             }
 
-            // Closing bracket
+            // Handle closing brackets
             if (isset($closingBrackets[$char])) {
+                // Pop from stack if it matches
                 if (!empty($nestingStack) && end($nestingStack) === $char) {
                     array_pop($nestingStack);
                 }
@@ -80,48 +82,59 @@ class LexerSplitter
                 continue;
             }
 
-            // Separator (only at top level)
-            if (empty($nestingStack) && ($char === ',' || $char === ';' || $char === "\n")) {
-                $trimmed = trim($current);
-                if ($trimmed !== '') {
-                    $result[] = $trimmed;
-                }
-                $current = '';
-                $i++;
+            // Check for separators only when not nested
+            if (empty($nestingStack)) {
+                // Handle comma, semicolon, and newline separators
+                if ($char === ',' || $char === ';' || $char === "\n") {
+                    // Skip \n if followed by \r
+                    if ($char === "\n" && $i > 0 && $input[$i - 1] === "\r") {
+                        // Already handled with \r, skip
+                    }
 
-                // Skip whitespace and CRLF
-                while ($i < $length && ($input[$i] === ' ' || $input[$i] === "\t" || $input[$i] === "\r" || $input[$i] === "\n")) {
+                    $trimmed = trim($current);
+                    if ($trimmed !== '') {
+                        $result[] = $trimmed;
+                    }
+                    $current = '';
                     $i++;
+
+                    // Skip any additional whitespace/newlines after separator
+                    while ($i < $length && ($input[$i] === ' ' || $input[$i] === "\t" || $input[$i] === "\r" || $input[$i] === "\n")) {
+                        $i++;
+                    }
+
+                    continue;
                 }
 
-                continue;
+                // Handle \r (for Windows line endings)
+                if ($char === "\r") {
+                    $trimmed = trim($current);
+                    if ($trimmed !== '') {
+                        $result[] = $trimmed;
+                    }
+                    $current = '';
+                    $i++;
+
+                    // Skip \n if it follows \r
+                    if ($i < $length && $input[$i] === "\n") {
+                        $i++;
+                    }
+
+                    // Skip any additional whitespace/newlines after separator
+                    while ($i < $length && ($input[$i] === ' ' || $input[$i] === "\t" || $input[$i] === "\r" || $input[$i] === "\n")) {
+                        $i++;
+                    }
+
+                    continue;
+                }
             }
 
-            // Windows CRLF handling
-            if ($char === "\r") {
-                $trimmed = trim($current);
-                if ($trimmed !== '') {
-                    $result[] = $trimmed;
-                }
-                $current = '';
-                $i++;
-
-                if ($i < $length && $input[$i] === "\n") {
-                    $i++;
-                }
-
-                while ($i < $length && ($input[$i] === ' ' || $input[$i] === "\t" || $input[$i] === "\r" || $input[$i] === "\n")) {
-                    $i++;
-                }
-
-                continue;
-            }
-
+            // Regular characters
             $current .= $char;
             $i++;
         }
 
-        // Final token
+        // Don't forget the last property
         $trimmed = trim($current);
         if ($trimmed !== '') {
             $result[] = $trimmed;
